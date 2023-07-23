@@ -18,7 +18,9 @@ typedef float float32;
 typedef double float64;
 typedef int8_t boolean;
 typedef uint8_t uint8;
+typedef int8_t int8;
 typedef uint16_t uint16;
+typedef int16_t int16;
 #define internal static
 #define local_persist static
 #define global_var static
@@ -27,12 +29,13 @@ typedef uint16_t uint16;
 
 #define Assert(Expr, ErrorStr) if(!(Expr)) {fprintf(stderr, "ASSERTION ERROR (%s:%d): " ErrorStr "\nExiting...\n", __FILE__, __LINE__); exit(-1);}
 
-
 char *Registers[2][8] = 
 {
     {"al", "cl", "dl", "bl", "ah", "ch", "dh", "bh"},
     {"ax", "cx", "dx", "bx", "sp", "bp", "si", "di"}
 };
+
+char *EffectiveAddCalc[] = {"bx + si", "bx + di", "bp + si", "bp + di", "si", "di", "bp", "bx"};
 
 typedef struct instructions instructions;
 
@@ -85,7 +88,6 @@ ReadBinaryIntoInstructions(char *FileName)
     }
     fclose(File);
 
-    Assert(BytesRead % 2 == 0, "number of bytes must be even, 16 bit ops only");
     Inst.Bytes = Content;
     Inst.NumBytes = BytesRead;
     Inst.Loaded = true;
@@ -95,21 +97,19 @@ ReadBinaryIntoInstructions(char *FileName)
 
 enum op_code
 {
-    op_reg_mem_mov = 0b100010
+    op_regmem_reg_mov = 0b100010,
+    op_immed_reg_mov = 0b1011,
+    op_immed_regmem_mov = 0b1100011,
+    op_mem_accum_mov = 0b1010000,
+    op_accum_mem_mov = 0b1010001,
 };
 
-enum mod
+enum mod_flags
 {
     mod_mem_no_dis = 0b00,
     mod_mem_8_dis = 0b01,
     mod_mem_16_dis = 0b10,
     mod_reg = 0b11,
-};
-
-enum flags
-{
-    flag_w = 0b1,
-    flag_d = (0b1 << 1),
 };
 
 // 1st Byte = 0b100010 0 1 (D: 0) (W: 1)
@@ -118,16 +118,18 @@ enum flags
 // NOTE(Abid): We are assuming 16-bit instructions for now
 int main(int argc, char* argv[])
 {
+    // NOTE(Abid): Open file for reading
     if(argc < 2)
     {
-        printf("Please provide an asm file. Exiting...\n");
+        printf("Please provide an asm file.");
         return 0;
     }
 
     char *FileName = argv[1];
     instructions Inst = ReadBinaryIntoInstructions(FileName);
-    Assert(Inst.Loaded, "could not open the binary file. Exiting...\n");
+    Assert(Inst.Loaded, "could not open the binary file.");
 
+#if 0
     char *PostFix = "_decoded.asm";
     char DecodedFileName[256];
     uint32 StrIdx;
@@ -139,29 +141,236 @@ int main(int argc, char* argv[])
     }
     DecodedFileName[StrIdx] = '\0';
 
+    // NOTE(Abid): Open file for writing
     FILE *File = NULL;
     if(fopen_s(&File, DecodedFileName, "w")) Assert(0, "could not create file");
+#endif
 
-    fprintf(File, "bits 16\n\n");
+    // NOTE(Abid): Main decoding loop
+    printf("bits 16\n\n");
     while(Inst.CurByteIdx != Inst.NumBytes)
     {
         uint8 FirstByte = Inst.Bytes[Inst.CurByteIdx++];
-        uint8 SecondByte = Inst.Bytes[Inst.CurByteIdx++];
 
-        // NOTE(Abid): If opcode is `mov` in register/memory mode
-        if(((FirstByte >> 2) & op_reg_mem_mov) == op_reg_mem_mov)
+        if((FirstByte >> 2) == op_regmem_reg_mov) /* NOTE(Abid): Register/Memory or Register move */
         {
-            fprintf(File, "mov ");
-            // NOTE(Abid): If We don't care about the MOD for now
-            uint8 REGRMIdx[] = {((uint8)(SecondByte << 2) >> 5), ((uint8)(SecondByte << 5) >> 5)};
-            uint8 DFlag = FirstByte & flag_d;
+            printf("mov ");
+            uint8 WFlag = FirstByte & 0b1;
+            uint8 DFlag = (FirstByte & 0b10) == 0b10;
 
-            fprintf(File, "%s, ", Registers[FirstByte & flag_w][REGRMIdx[1-DFlag]]);
-            fprintf(File, "%s\n", Registers[FirstByte & flag_w][REGRMIdx[DFlag]]);
+            uint8 SecondByte = Inst.Bytes[Inst.CurByteIdx++];
+            uint8 Reg = ((uint8)(SecondByte << 2) >> 5);
+            uint8 RM = SecondByte & 0b111;
+            uint8 Mod = SecondByte >> 6;
+
+            switch(Mod)
+            {
+                case mod_reg:
+                {
+                    uint8 REGRMIdx[] = {Reg, RM};
+
+                    printf("%s, ", Registers[FirstByte & WFlag][REGRMIdx[1-DFlag]]);
+                    printf("%s\n", Registers[FirstByte & WFlag][REGRMIdx[DFlag]]);
+
+                } break;
+                case mod_mem_no_dis:
+                {
+                    boolean DirectAddress = RM == 0b110;
+                    if(DFlag) 
+                    {
+                        printf("%s, ", Registers[WFlag][Reg]);
+                        if(DirectAddress) 
+                        {
+                            int16 Data = *(int16 *)(Inst.Bytes + Inst.CurByteIdx++); Inst.CurByteIdx++;
+                            printf("[%i]\n", Data);
+                        }
+                        else printf("[%s]\n", EffectiveAddCalc[RM]);
+                    }
+                    else
+                    {
+                        if(DirectAddress) 
+                        {
+                            int16 Data = *(int16 *)(Inst.Bytes + Inst.CurByteIdx++); Inst.CurByteIdx++;
+                            printf("[%i], ", Data);
+                        }
+                        else printf("[%s], ", EffectiveAddCalc[RM]);
+                        printf("%s\n", Registers[WFlag][Reg]);
+                    }
+                } break;
+                case mod_mem_8_dis:
+                {
+                    if(DFlag) 
+                    {
+                        printf("%s, [%s ", Registers[WFlag][Reg], EffectiveAddCalc[RM]);
+                        int8 Data = *(int8 *)(Inst.Bytes + Inst.CurByteIdx++);
+                        Data < 0 ?  printf("- %i]\n", Data*-1) : printf("+ %i]\n", Data);
+                    }
+                    else
+                    {
+                        printf("[%s ", EffectiveAddCalc[RM]);
+                        int8 Data = *(int8 *)(Inst.Bytes + Inst.CurByteIdx++);
+                        Data < 0 ? printf("- %i], ", Data*-1) :  printf("+ %i], ", Data);
+                        printf("%s\n", Registers[WFlag][Reg]);
+                    }
+                } break;
+                case mod_mem_16_dis:
+                {
+                    if(DFlag) 
+                    {
+                        printf("%s, [%s ", Registers[WFlag][Reg], EffectiveAddCalc[RM]);
+                        uint8 LowByte = *(int8 *)(Inst.Bytes + Inst.CurByteIdx++);
+                        uint16 HighByte = *(int8 *)(Inst.Bytes + Inst.CurByteIdx++);
+                        int16 Data = (HighByte << 8) | LowByte;
+                        Data < 0 ?  printf("- %i]\n", Data*-1) : printf("+ %i]\n", Data);
+                    }
+                    else
+                    {
+                        printf("[%s ", EffectiveAddCalc[RM]);
+                        uint8 LowByte = *(uint8 *)(Inst.Bytes + Inst.CurByteIdx++);
+                        uint16 HighByte = *(uint8 *)(Inst.Bytes + Inst.CurByteIdx++);
+                        int16 Data = (HighByte << 8) | LowByte;
+                        Data < 0 ? printf("- %i], ", Data*-1) :  printf("+ %i], ", Data);
+                        printf("%s\n", Registers[WFlag][Reg]);
+                    }
+                } break;
+                default: Assert(0, "Invalid Code Path");
+            }
         }
+        else if((FirstByte >> 4) == op_immed_reg_mov) /* NOTE(Abid): Immediate to register move*/
+        {
+            // NOTE(Abid): Immediate to register move
+            printf("mov ");
+            uint8 WFlag = (FirstByte & 0b1000) == 0b1000;
+            uint8 Reg = FirstByte & 0b111;
+            printf("%s, ", Registers[WFlag][Reg]);
 
+            if(WFlag)
+            {
+                int16 *Data = (int16 *)(Inst.Bytes + Inst.CurByteIdx++); Inst.CurByteIdx++;
+                printf("%i\n", *Data);
+            }
+            else
+            {
+                int8 *Data = (int8 *)Inst.Bytes + Inst.CurByteIdx++;
+                printf("%i\n", *Data);
+            }
+        }
+        else if((FirstByte >> 1) == op_immed_regmem_mov) /* NOTE(Abid): Immediate to register/memory move*/
+        {
+            // NOTE(Abid): Immediate to register move
+            printf("mov ");
+
+            uint8 SecondByte = Inst.Bytes[Inst.CurByteIdx++];
+            uint8 Mod = SecondByte >> 6;
+            uint8 WFlag = FirstByte & 0b1;
+            uint8 RM = SecondByte & 0b111;
+
+            switch(Mod)
+            {
+                case mod_reg:
+                {
+                    // NOTE(Abid): The reg version should have been done above in immediate to register mode
+                    Assert(0, "Cannot have this mod here");
+                } break;
+                case mod_mem_8_dis:
+                {
+                    printf("[%s ", EffectiveAddCalc[RM]);
+                    int8 Disp = *(int8 *)(Inst.Bytes + Inst.CurByteIdx++); Inst.CurByteIdx++;
+                    Disp < 0 ? printf("- %i], ", Disp*-1) :  printf("+ %i], ", Disp);
+                    if(WFlag)
+                    {
+                        uint8 LowByte = *(int8 *)(Inst.Bytes + Inst.CurByteIdx++);
+                        uint16 HighByte = *(int8 *)(Inst.Bytes + Inst.CurByteIdx++);
+                        int16 Data = (HighByte << 8) | LowByte;
+                        printf("word %i\n", Data);
+                    }
+                    else
+                    {
+                        int8 Data = *(int8 *)(Inst.Bytes + Inst.CurByteIdx++);
+                        Disp < 0 ? printf("- %i], ", Disp*-1) :  printf("+ %i], ", Disp);
+                        printf("byte %i\n", Data);
+                    }
+
+                } break;
+                case mod_mem_16_dis:
+                {
+                    printf("[%s ", EffectiveAddCalc[RM]);
+
+                    uint8 LowByte = *(int8 *)(Inst.Bytes + Inst.CurByteIdx++);
+                    uint16 HighByte = *(int8 *)(Inst.Bytes + Inst.CurByteIdx++);
+                    int16 Disp = (HighByte << 8) | LowByte;
+                    Disp < 0 ? printf("- %i], ", Disp*-1) :  printf("+ %i], ", Disp);
+                    if(WFlag)
+                    {
+                        LowByte = *(int8 *)(Inst.Bytes + Inst.CurByteIdx++);
+                        HighByte = *(int8 *)(Inst.Bytes + Inst.CurByteIdx++);
+                        int16 Data = (HighByte << 8) | LowByte;
+                        printf("word %i\n", Data);
+                    }
+                    else
+                    {
+                        int8 Data = *(int8 *)(Inst.Bytes + Inst.CurByteIdx++);
+                        Disp < 0 ? printf("- %i], ", Disp*-1) :  printf("+ %i], ", Disp);
+                        printf("byte %i\n", Data);
+                    }
+
+                } break;
+                case mod_mem_no_dis:
+                {
+                    printf("[%s], ", EffectiveAddCalc[RM]);
+                    if(WFlag)
+                    {
+                        uint8 LowByte = *(int8 *)(Inst.Bytes + Inst.CurByteIdx++);
+                        uint16 HighByte = *(int8 *)(Inst.Bytes + Inst.CurByteIdx++);
+                        int16 Data = (HighByte << 8) | LowByte;
+                        printf("word %i\n", Data);
+                    }
+                    else
+                    {
+                        int8 Data = *(int8 *)(Inst.Bytes + Inst.CurByteIdx++);
+                        printf("byte %i\n", Data);
+                    }
+                } break;
+            }
+        }
+        else if((FirstByte >> 1) == op_mem_accum_mov) /* NOTE(Abid): Memory to accumulator */
+        {
+            printf("mov ax, ");
+            uint8 WFlag = FirstByte & 0b1;
+            if(WFlag)
+            {
+                uint8 LowByte = *(int8 *)(Inst.Bytes + Inst.CurByteIdx++);
+                uint16 HighByte = *(int8 *)(Inst.Bytes + Inst.CurByteIdx++);
+                int16 Addr = (HighByte << 8) | LowByte;
+                printf("[%i]\n", Addr);
+            }
+            else
+            {
+                int8 Addr = *(int8 *)(Inst.Bytes + Inst.CurByteIdx++);
+                printf("[%i]\n", Addr);
+            }
+        }
+        else if((FirstByte >> 1) == op_accum_mem_mov) /* NOTE(Abid): Accumulator to memory */
+        {
+            printf("mov ");
+            uint8 WFlag = FirstByte & 0b1;
+            if(WFlag)
+            {
+                uint8 LowByte = *(int8 *)(Inst.Bytes + Inst.CurByteIdx++);
+                uint16 HighByte = *(int8 *)(Inst.Bytes + Inst.CurByteIdx++);
+                int16 Addr = (HighByte << 8) | LowByte;
+                printf("[%i], ", Addr);
+            }
+            else
+            {
+                int8 Addr = *(int8 *)(Inst.Bytes + Inst.CurByteIdx++);
+                printf("[%i], ", Addr);
+            }
+            printf("ax\n");
+        }
+        else Assert(0, "invalid opcode");
     }
-    printf("Binary file successfully decoded!");
+    // printf("\nBinary file successfully decoded!");
 
     return 0;
 }
