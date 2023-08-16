@@ -16,7 +16,7 @@ CFLAGS_RELEASE := #/O2 /Oi /MT /DRELEASE
 ifeq ($(OS),Windows_NT)
 CC := cl
 EXECUTABLE := simulate8086.exe
-CFLAGS_COMMON := /EHa /nologo /FC /Zo /WX /W4 /Gm- /wd5208 /wd4505
+CFLAGS_COMMON := /EHa /nologo /FC /Zo /WX /W4 /Gm- /wd5208 /wd4505 /wd4201
 CFLAGS_DEBUG := /Od /MTd /Z7 /Zo /DDEBUG
 CFLAGS_RELEASE := /O2 /Oi /MT /DRELEASE
 endif
