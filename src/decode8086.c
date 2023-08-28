@@ -132,6 +132,7 @@ _RegMem_Reg_Output(byte_stream *Stream, instruction *Inst, uint8 FirstByte) {
  *             decoding.
  *             Initially, we decode one instruction and simulate it immediately.
  */
+/* TODO(Abid): Implement the segment registers as well */
 internal instruction
 DecodeNext(byte_stream *ByteStream)
 {

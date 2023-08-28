@@ -28,10 +28,8 @@ typedef int16_t int16;
 #define false 0
 #define ArraySize(Arr) sizeof((Arr)) / sizeof((Arr)[0])
 #define Assert(Expr, ErrorStr) if(!(Expr)) {fprintf(stderr, "ASSERTION ERROR (%s:%d): " ErrorStr "\nExiting...\n", __FILE__, __LINE__); *(int *)0 = 0;}
-#define WHOLE_REGISTER_BEGIN_IDX 8
 
 #include "simulate8086.h"
-
 #include "decode8086.c"
 
 /* TODO(Abid): Refactor the RET instructions to remove the dumb control flow change below */
@@ -44,8 +42,7 @@ PrintNext(instruction *Inst)
 
     for(uint32 Idx = 0; Idx < ArraySize(Operands); ++Idx) {
         field Operand = Operands[Idx];
-        switch(Operand.FieldType)
-        {
+        switch(Operand.FieldType) {
             case ft_reg: {
                 printf("%s", RegIdxToRegStr[Operand.Bytes16]);
             } break;
@@ -105,58 +102,170 @@ PrintRegister(uint16 Idx, boolean IsHex) {
     IsHex ? printf("0x%X", Value) : printf("%d", Value);
 }
 
-internal void
-SimulateNext(instruction *Inst)
+inline internal void
+PrintFlags()
 {
+    local_persist char *FlagIdxToStr[] = {
+    #define ENUM(Enum) #Enum,
+    #define POS(Value)
+        FLAGS_POSITION_MAPPING
+    #undef ENUM
+    #undef POS
+    };
+
+    local_persist int32 FlagShiftPosition[] = {
+    #define ENUM(Enum)
+    #define POS(Value) Value,
+        FLAGS_POSITION_MAPPING
+    #undef ENUM
+    #undef POS
+    };
+
+    printf("flags-> ");
+    for(int32 Idx = 0; Idx < ArraySize(FlagShiftPosition); ++Idx)
+    {
+        if(GET_FLAG_VALUE(FlagShiftPosition[Idx])) printf("%s ", FlagIdxToStr[Idx]);
+    }
+}
+
+/* NOTE(Abid): It seems, as far as the current code is concerned, that the portion
+ *             related to resolving the source and destination is the same and can
+ *             therefore be separated out from the rest of the switch statement. */
+internal void
+SimulateNext(instruction *Inst) {
     PrintNext(Inst); printf(" ; ");
+
+    /* NOTE(Abid): Source resolution */
+    int32 Source = 0;
+    boolean IsSrcByte = Inst->Operand2.IsBYTE;
+    boolean IsSrcReg = false;
+    switch(Inst->Operand2.FieldType) {
+        case ft_reg: {
+            IsSrcReg = true;
+            int16 Idx = Inst->Operand2.Bytes16;
+            Idx = RegIdxToRegMem[Idx];
+            Source = IsSrcByte ? *(int8 *)(GLOBALRegisters + Idx) : *(int16 *)(GLOBALRegisters + Idx);
+        } break;
+        case ft_imme_sized:
+        case ft_imme: {
+            Source = IsSrcByte ? Inst->Operand2.Bytes8[0] : Inst->Operand2.Bytes16;
+        } break;
+        default : Assert(0, "invalid path")
+    }
+
+    /* NOTE(Abid): Destination resolution */
+    /* NOTE(Abid): Each case is responsible for printing its pre-modified value */
+    void *Dest = 0;
+    boolean IsDestReg = false;
+    boolean IsDestByte = false;
+    int16 Idx = -1; 
+    switch(Inst->Operand1.FieldType) {
+        case ft_reg: {
+            IsDestReg = true;
+            Idx = Inst->Operand1.Bytes16;
+            IsDestByte = Idx < WIDE_REGISTER_START_IDX; 
+
+            Idx = RegIdxToRegMem[Idx];
+            Dest = GLOBALRegisters + Idx;
+
+            printf("%s:", GLOBALRegToStr[(Idx - Idx % 2)/2]);
+            printf("->"); PrintRegister(Idx - Idx % 2, true);
+        } break;
+        case ft_imme_sized:
+        case ft_imme: Assert(0, "cannot have immediate value as destination"); break;
+        default : Assert(0, "invalid path");
+    }
+
+    /* NOTE(Abid): Op simulation */
+    int32 InitDestValue = 0;
+    int32 PostDestValue = 0;
+    boolean IsImplicitFlagOp = false;
     switch(Inst->Op) {
         case op_mov: {
-            // NOTE(Abid): Source value checking
-            int16 Source = 0;
-            switch(Inst->Operand2.FieldType) {
-                case ft_reg: {
-                    int16 Idx = Inst->Operand2.Bytes16;
-                    Idx = ToGLOBALRegIdx[Idx];
-                    Source = Inst->Operand2.IsBYTE ? *(int8 *)(GLOBALRegisters + Idx)
-                                                   : *(int16 *)(GLOBALRegisters + Idx);
-                } break;
-                case ft_imme_sized:
-                case ft_imme: {
-                    Source = Inst->Operand2.IsBYTE ? Inst->Operand2.Bytes8[0]
-                                                   : Inst->Operand2.Bytes16;
-                } break;
-                default : Assert(0, "invalid path")
+            if(IsDestByte) {
+                InitDestValue = *(uint8 *)(Dest);
+                *(uint8 *)(Dest) = (uint8)Source; 
+            } else {
+                InitDestValue = *(uint16 *)(Dest);
+                *(uint16 *)(Dest) = (int16)Source;
             }
-
-            // NOTE(Abid): Dest checking
-            switch(Inst->Operand1.FieldType) {
-                case ft_reg: {
-                    int16 Idx = Inst->Operand1.Bytes16;
-                    boolean IsWholeRegister = Idx >= WHOLE_REGISTER_BEGIN_IDX;
-                    Idx = ToGLOBALRegIdx[Idx];
-                    printf("%s:", GLOBALRegToStr[(Idx - Idx % 2)/2]); // Print the whole register only
-                    PrintRegister(Idx - Idx % 2, true);               // Print the whole register only
-                    if(IsWholeRegister) *(uint16 *)(GLOBALRegisters + Idx) = Source;
-                    else *(uint8 *)(GLOBALRegisters + Idx) = (uint8)Source; 
-                    printf("->");
-                    PrintRegister(Idx - Idx % 2, true);
-                    printf("\n");
-                } break;
-                case ft_imme_sized:
-                case ft_imme: Assert(0, "cannot have immediate value as destination"); break;
-                default : Assert(0, "invalid path");
+        } break;
+        case op_add: {
+            IsImplicitFlagOp = true;
+            if(IsDestByte) {
+                InitDestValue = *(int8 *)(Dest);
+                PostDestValue = InitDestValue + (int8)Source;
+                *(uint8 *)(Dest) = (int8)PostDestValue;
             }
-
-            if(Inst->Operand1.FieldType == ft_reg) { // Dest is a register
+            else {
+                InitDestValue = *(int16 *)(Dest);
+                PostDestValue = InitDestValue + (int16)Source;
+                *(uint16 *)(Dest) = (int16)PostDestValue;
+            }
+        } break;
+        case op_sub: {
+            IsImplicitFlagOp = true;
+            if(IsDestByte) {
+                InitDestValue = *(int8 *)(Dest);
+                PostDestValue = InitDestValue - (int8)Source;
+                *(uint8 *)(Dest) = (int8)PostDestValue;
+            }
+            else {
+                InitDestValue = *(int16 *)(Dest);
+                PostDestValue = InitDestValue - (int16)Source;
+                *(uint16 *)(Dest) = (int16)PostDestValue;
+            }
+        } break;
+        case op_cmp: {
+            IsImplicitFlagOp = true;
+            if(IsDestByte) {
+                InitDestValue = *(int8 *)(Dest);
+                PostDestValue = InitDestValue - (int8)Source;
+            }
+            else {
+                InitDestValue = *(int16 *)(Dest);
+                PostDestValue = InitDestValue - (int16)Source;
             }
         } break;
         default : Assert(0, "invalid path")
     }
+
+    // NOTE(Abid): Post-modified print here
+    if(IsDestReg) { printf("->"); PrintRegister(Idx - Idx % 2, true); }
+    else Assert(0, "not implemented");
+
+    /* NOTE(Abid): In case we have an op that changes the flags */
+    if(IsImplicitFlagOp) {
+        boolean IsZeroFlag = PostDestValue == 0;
+        SET_FLAG_VALUE(flag_zf, IsZeroFlag);
+
+        boolean IsSignFlag = PostDestValue < 0;
+        SET_FLAG_VALUE(flag_sf, IsSignFlag);
+
+        boolean IsOverFlow = Inst->Op == op_add && 
+                             (Source * InitDestValue >= 0) &&
+                             (SIGN_OF_INT(InitDestValue, int32) != SIGN_OF_INT(*(int16 *)(Dest), int16));
+        SET_FLAG_VALUE(flag_of, IsOverFlow);
+
+        boolean IsCarry = IsDestByte ? (PostDestValue >> 8) > 0
+                                     : (PostDestValue >> 16) > 0;
+        SET_FLAG_VALUE(flag_cf, IsCarry);
+
+        int32 ParityCount = 0;
+        for(int32 I = 0; I < 8; ++I) ParityCount += (PostDestValue >> I) & 0b1;
+        boolean IsParity = ParityCount % 2 == 0;
+        SET_FLAG_VALUE(flag_pf, IsParity);
+
+        /* TODO(Abid): Auxiliary Flag seems to be incorrect */
+        /* TODO(Abid): Test all the challenge flags */
+        boolean IsAuxiliary = (PostDestValue >> 4 & 0b1) != (InitDestValue >> 4 & 0b1);
+        SET_FLAG_VALUE(flag_af, IsAuxiliary);
+    }
+    printf(" ; "); PrintFlags(); printf("\n"); 
 }
 
 /* NOTE(Abid): We are assuming 16-bit instructions for now */
-int main(int argc, char* argv[])
-{
+int main(int argc, char* argv[]) {
     if(argc < 2) {
         printf("Please provide an asm file.");
         return 0;
@@ -179,8 +288,7 @@ int main(int argc, char* argv[])
     }
 
     printf("\nFinal registers:\n");
-    for(uint16 Idx = 0; Idx < ArraySize(GLOBALRegisters)/2; ++Idx)
-    {
+    for(uint16 Idx = 0; Idx < ArraySize(GLOBALRegisters)/2; ++Idx) {
         printf("\t%s: ", GLOBALRegToStr[Idx]);
         /* NOTE(Abid): Print the whole register only */
         PrintRegister(2*Idx, true); printf(" ("); PrintRegister(2*Idx, false); printf(")\n");

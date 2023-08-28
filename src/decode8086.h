@@ -57,16 +57,6 @@ typedef enum {
 #undef X
 } register_idx;
 
-char *RegIdxToRegStr[] = {
-#define X(Val) #Val,
-#define Y(Value)
-    X_REGISTERS_MAPPING
-#undef Y
-#undef X
-};
-
-char *EffectiveAddCalc[] = {"bx + si", "bx + di", "bp + si", "bp + di", "si", "di", "bp", "bx"};
-
 typedef enum {
     /* NOTE(Abid): mov */
     opcode_regmem_reg_mov = 0b100010,
@@ -91,14 +81,6 @@ typedef enum {
 #undef Y
 } op_code;
 
-local_persist char *RETInstToStr[] = {
-    "none",
-#define X(Enum) #Enum,
-#define Y(Value)
-    X_RET_INSTRUCTION
-#undef X
-#undef Y
-};
 
 #define X_OPS \
     X(none) \
@@ -114,12 +96,6 @@ typedef enum {
 #undef X
 } op;
 
-char *OpToStr[] = {
-#define X(Value) #Value,
-    X_OPS
-#undef X
-};
-
 typedef enum {
     mod_mem_no_dis = 0b00,
     mod_mem_8_dis = 0b01,
@@ -129,15 +105,15 @@ typedef enum {
 
 typedef enum {
     ft_none,
-    ft_reg,  // Register
-    ft_mem,  // Memory
-    ft_mem_sized, // Memory (byte/word)
-    ft_effe,  // Effective Address
-    ft_effe_sized,   // Effective Address (byte/word)
-    ft_imme,  // Immediate
+    ft_reg,         // Register
+    ft_mem,         // Memory
+    ft_mem_sized,   // Memory (byte/word)
+    ft_effe,        // Effective Address
+    ft_effe_sized,  // Effective Address (byte/word)
+    ft_imme,        // Immediate
     ft_imme_sized,  // Immediate (byte/word delianation)
-    ft_disp, // Displacement
-    ft_ret,  // RET Index
+    ft_disp,        // Displacement
+    ft_ret,         // RET Index
 } field_type;
 
 typedef struct {
