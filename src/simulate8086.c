@@ -128,9 +128,8 @@ PrintFlags()
     }
 }
 
-/* NOTE(Abid): It seems, as far as the current code is concerned, that the portion
- *             related to resolving the source and destination is the same and can
- *             therefore be separated out from the rest of the switch statement. */
+/* NOTE(Abid): The portion related to resolving the source and destination is the same,
+ *             therefore, it is separated out from the rest of the switch statement. */
 internal void
 SimulateNext(instruction *Inst) {
     PrintNext(Inst); printf(" ; ");
@@ -180,6 +179,7 @@ SimulateNext(instruction *Inst) {
     int32 InitDestValue = 0;
     int32 PostDestValue = 0;
     boolean IsImplicitFlagOp = false;
+    boolean IsCarry = false;
     switch(Inst->Op) {
         case op_mov: {
             if(IsDestByte) {
@@ -196,11 +196,17 @@ SimulateNext(instruction *Inst) {
                 InitDestValue = *(int8 *)(Dest);
                 PostDestValue = InitDestValue + (int8)Source;
                 *(uint8 *)(Dest) = (int8)PostDestValue;
+
+                int32 ExpandedValue = ((int8)InitDestValue & 0xff) + ((int8)Source & 0xff);
+                IsCarry = (ExpandedValue >> 8) > 0;
             }
             else {
                 InitDestValue = *(int16 *)(Dest);
                 PostDestValue = InitDestValue + (int16)Source;
                 *(uint16 *)(Dest) = (int16)PostDestValue;
+
+                int32 ExpandedValue = ((int16)InitDestValue & 0xffff) + ((int16)Source & 0xffff);
+                IsCarry = (ExpandedValue >> 16) > 0;
             }
         } break;
         case op_sub: {
@@ -209,11 +215,17 @@ SimulateNext(instruction *Inst) {
                 InitDestValue = *(int8 *)(Dest);
                 PostDestValue = InitDestValue - (int8)Source;
                 *(uint8 *)(Dest) = (int8)PostDestValue;
+
+                int32 ExpandedValue = ((int8)InitDestValue & 0xff) - ((int8)Source & 0xff);
+                IsCarry = (((int8)InitDestValue & 0xff) < ((int8)Source & 0xff)) || (ExpandedValue >> 8) > 0;
             }
             else {
                 InitDestValue = *(int16 *)(Dest);
                 PostDestValue = InitDestValue - (int16)Source;
                 *(uint16 *)(Dest) = (int16)PostDestValue;
+
+                int32 ExpandedValue = ((int16)InitDestValue & 0xffff) - ((int16)Source & 0xffff);
+                IsCarry = (((int16)InitDestValue & 0xffff) < ((int16)Source & 0xffff)) || (ExpandedValue >> 16) > 0;
             }
         } break;
         case op_cmp: {
@@ -221,10 +233,16 @@ SimulateNext(instruction *Inst) {
             if(IsDestByte) {
                 InitDestValue = *(int8 *)(Dest);
                 PostDestValue = InitDestValue - (int8)Source;
+
+                int32 ExpandedValue = ((int8)InitDestValue & 0xff) - ((int8)Source & 0xff);
+                IsCarry = (((int8)InitDestValue & 0xff) < ((int8)Source & 0xff)) || (ExpandedValue >> 8) > 0;
             }
             else {
                 InitDestValue = *(int16 *)(Dest);
                 PostDestValue = InitDestValue - (int16)Source;
+
+                int32 ExpandedValue = ((int16)InitDestValue & 0xffff) - ((int16)Source & 0xffff);
+                IsCarry = (((int16)InitDestValue & 0xffff) < ((int16)Source & 0xffff)) || (ExpandedValue >> 16) > 0;
             }
         } break;
         default : Assert(0, "invalid path")
@@ -237,29 +255,36 @@ SimulateNext(instruction *Inst) {
     /* NOTE(Abid): In case we have an op that changes the flags */
     if(IsImplicitFlagOp) {
         boolean IsZeroFlag = PostDestValue == 0;
-        SET_FLAG_VALUE(flag_zf, IsZeroFlag);
+        SET_FLAG_VALUE(flag_zf, IsZeroFlag); // Works
 
-        boolean IsSignFlag = PostDestValue < 0;
-        SET_FLAG_VALUE(flag_sf, IsSignFlag);
+        boolean IsSignFlag = (PostDestValue >> 15) & 0b1;
+        SET_FLAG_VALUE(flag_sf, IsSignFlag); // Works
 
-        boolean IsOverFlow = Inst->Op == op_add && 
-                             (Source * InitDestValue >= 0) &&
-                             (SIGN_OF_INT(InitDestValue, int32) != SIGN_OF_INT(*(int16 *)(Dest), int16));
-        SET_FLAG_VALUE(flag_of, IsOverFlow);
+        boolean IsOverFlow = false;
+        if(IsDestByte) {
+            int SourceSign = Inst->Op == op_add ? SIGN_OF_INT((int8)(Source), int8) :
+                                                  !(SIGN_OF_INT((int8)(Source), int8));
+            boolean IsOperandSignSame = SourceSign == SIGN_OF_INT((int8)(InitDestValue), int8);
+            IsOverFlow = (IsOperandSignSame) && (SourceSign != SIGN_OF_INT(*(int8 *)(Dest), int8));
+        }
+        else {
+            int SourceSign = Inst->Op == op_add ? SIGN_OF_INT((int16)(Source & 0xffff), int16) :
+                                                  !(SIGN_OF_INT((int16)(Source & 0xffff), int16));
+            boolean IsOperandSignSame = SourceSign == SIGN_OF_INT((int16)(InitDestValue & 0xffff), int16);
+            IsOverFlow = (IsOperandSignSame) && (SourceSign != SIGN_OF_INT(*(int16 *)(Dest), int16));
+        }
+        SET_FLAG_VALUE(flag_of, IsOverFlow); // Works
 
-        boolean IsCarry = IsDestByte ? (PostDestValue >> 8) > 0
-                                     : (PostDestValue >> 16) > 0;
-        SET_FLAG_VALUE(flag_cf, IsCarry);
+        SET_FLAG_VALUE(flag_cf, IsCarry); // Works
 
         int32 ParityCount = 0;
         for(int32 I = 0; I < 8; ++I) ParityCount += (PostDestValue >> I) & 0b1;
         boolean IsParity = ParityCount % 2 == 0;
-        SET_FLAG_VALUE(flag_pf, IsParity);
+        SET_FLAG_VALUE(flag_pf, IsParity); // Works
 
-        /* TODO(Abid): Auxiliary Flag seems to be incorrect */
-        /* TODO(Abid): Test all the challenge flags */
-        boolean IsAuxiliary = (PostDestValue >> 4 & 0b1) != (InitDestValue >> 4 & 0b1);
-        SET_FLAG_VALUE(flag_af, IsAuxiliary);
+        boolean IsAuxiliary = (Inst->Op == op_add && ((((Source & 0xf) + (InitDestValue & 0xf)) >> 4) & 0b1)) ||
+                              ((Inst->Op == op_sub || Inst->Op == op_cmp)  && ((Source & 0xf) > (InitDestValue & 0xf)));
+        SET_FLAG_VALUE(flag_af, IsAuxiliary); // Works
     }
     printf(" ; "); PrintFlags(); printf("\n"); 
 }

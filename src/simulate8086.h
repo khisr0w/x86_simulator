@@ -34,7 +34,7 @@ typedef struct {
     int16 di;
 } registers;
 
-/*NOTE(Abid) Below are all the flags in the register:
+/* NOTE(Abid): Below are all the flags in the register:
     NOTE(Abid): The following flags are set indirectly through arithmatic ops
     flag_cf = 1 << 0,  Carry Flag (Carry out of or borrow into the high order bit of result)
     flag_pf = 1 << 2,  Parity Flag (Whether the low 8-bit count of the result is even or odd)
