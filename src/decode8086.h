@@ -8,22 +8,25 @@
 
 #if !defined(DECODE8086_H)
 
-/* NOTE(Abid): 8 registers with 4 having 8-bit low and high values */
-#define X_RET_INSTRUCTION \
+/* NOTE(Abid): 8 registers with 4 having 8-bit low and high values
+ * An overview: https://www.includehelp.com/embedded-system/jump-instructions-in-8086-microprocessor.aspx
+ * */
+
+#define X_JUMP_INSTRUCTION \
     X(je)     Y(0b01110100) \
     X(jl)     Y(0b01111100) \
     X(jle)    Y(0b01111110) \
     X(jb)     Y(0b01110010) \
     X(jbe)    Y(0b01110110) \
-    X(jp)     Y(0b01111010) \
+    X(jp)     Y(0b01111010) /* jpe as well */ \
     X(jo)     Y(0b01110000) \
     X(js)     Y(0b01111000) \
-    X(jne)    Y(0b01110101) \
+    X(jne)    Y(0b01110101) /* jnz as well */ \
     X(jnl)    Y(0b01111101) \
     X(jg)     Y(0b01111111) \
     X(jnb)    Y(0b01110011) \
     X(ja)     Y(0b01110111) \
-    X(jnp)    Y(0b01111011) \
+    X(jnp)    Y(0b01111011) /* npo as well */ \
     X(jno)    Y(0b01110001) \
     X(jns)    Y(0b01111001) \
     X(loop)   Y(0b11100010) \
@@ -73,27 +76,33 @@ typedef enum {
     opcode_sub = 0b101,
     opcode_cmp = 0b111,
 
-    /* NOTE(Abid): return from call (jumps) */
-#define X(Enum) op_##Enum =
+    /* NOTE(Abid): jumps */
+#define X(Enum) opcode_##Enum =
 #define Y(Value) Value,
-    X_RET_INSTRUCTION
+    X_JUMP_INSTRUCTION
 #undef X
+
 #undef Y
 } op_code;
 
 
 #define X_OPS \
-    X(none) \
-    X(mov)  \
-    X(add)  \
-    X(sub)  \
-    X(cmp)  \
-    X(ret)
+    X(none)   \
+    X(mov)    \
+    X(add)    \
+    X(sub)    \
+    X(cmp)    \
 
 typedef enum {
 #define X(Enum) op_##Enum,
     X_OPS
 #undef X
+    _op_normal_to_jump_cutoff, /* WARNING(Abid): This value must not be moved. */
+#define X(Enum) op_##Enum,
+#define Y(Value)
+    X_JUMP_INSTRUCTION
+#undef X
+#undef Y
 } op;
 
 typedef enum {
@@ -104,7 +113,8 @@ typedef enum {
 } mod_flags;
 
 typedef enum {
-    ft_none,
+    ft_invalid,     // Invalid
+    ft_empty,       // Empty (When not needed)
     ft_reg,         // Register
     ft_mem,         // Memory
     ft_mem_sized,   // Memory (byte/word)
@@ -113,22 +123,22 @@ typedef enum {
     ft_imme,        // Immediate
     ft_imme_sized,  // Immediate (byte/word delianation)
     ft_disp,        // Displacement
-    ft_ret,         // RET Index
+    ft_jump,       // Jumps Index
 } field_type;
 
 typedef struct {
     union {
-        int8 Bytes8[2];
-        int16 Bytes16; // For the most part, this will index into registers, in which case idx 0 is dest.
+        i8 Bytes8[2];
+        i16 Bytes16; // For the most part, this will index into registers, in which case idx 0 is dest.
     };
-    boolean IsBYTE; // true if the 1st operand is used as 8 bytes
+    bool IsBYTE; // true if the 1st operand is used as 8 bytes
     field_type FieldType;
 } field;
 
 typedef struct {
     op Op;
     mod_flags Mod;
-    boolean DirectAddress;
+    bool DirectAddress;
     field Operand1;
     field Operand2;
     field Extended;
@@ -141,12 +151,10 @@ typedef struct {
 } instruction_stream;
 
 typedef struct {
-    boolean Loaded;
+    bool Loaded;
 
-    uint8 *Bytes;
+    u8 *Bytes;
     size_t NumBytes;
-
-    uint8 CurByteIdx;
 } byte_stream;
 
 #define DECODE8086_H

@@ -23,14 +23,14 @@ endif
 
 # Source files
 # SOURCES := $(wildcard $(SRC_DIR)/*.cpp)
-SOURCES := $(SRC_DIR)/simulate8086.c
+SOURCES := $(SRC_DIR)/main.c
 
 # Object files
 # OBJECTS_DEBUG := $(patsubst $(SRC_DIR)/%.cpp,$(DEBUG_DIR)/%.obj,$(SOURCES))
 # OBJECTS_RELEASE := $(patsubst $(SRC_DIR)/%.cpp,$(RELEASE_DIR)/%.obj,$(SOURCES))
 
-OBJECTS_DEBUG := $(DEBUG_DIR)/simulate8086.obj
-OBJECTS_RELEASE := $(RELEASE_DIR)/simulate8086.obj
+OBJECTS_DEBUG := $(DEBUG_DIR)/main.obj
+OBJECTS_RELEASE := $(RELEASE_DIR)/main.obj
 
 # Executables
 EXECUTABLE_DEUBG := $(DEBUG_DIR)/$(EXECUTABLE)
@@ -50,7 +50,7 @@ $(DEBUG_DIR):
 	@echo Starting debug build...
 	@mkdir -p $(DEBUG_DIR)
 
-$(DEBUG_DIR)/simulate8086.obj: $(SRC_DIR)/simulate8086.c
+$(OBJECTS_DEBUG): $(SOURCES)
 	@echo "    [Debug] Compiling Objects..."
 
 ifeq ($(OS),Windows_NT)
@@ -77,7 +77,7 @@ $(RELEASE_DIR):
 	@echo Starting release build...
 	@mkdir -p $(RELEASE_DIR)
 
-$(RELEASE_DIR)/simulate8086.obj: $(SRC_DIR)/simulate8086.c
+$(OBJECTS_RELEASE): $(SOURCES)
 	@echo "    Compiling Objects..."
 ifeq ($(OS),Windows_NT)
 	@$(CC) $(CFLAGS_COMMON) $(CFLAGS_RELEASE) /Fo$@ /c $<

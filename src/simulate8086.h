@@ -5,6 +5,8 @@
     |    Last Modified:                                                                |
     |                                                                                  |
     +=====================| Sayed Abid Hashimi, Copyright © All rights reserved |======+  */
+#define IP_REG_16_IDX 12
+#define IP_REG_8_IDX 24
 
 #if !defined(SIMULATE8086_H)
 #include "decode8086.h"
@@ -13,26 +15,53 @@
 
 typedef struct {
     union {
-        int16 ax;
-        struct { int8 al; int8 ah; };
+        i16 AX;
+        struct { i8 AL; i8 AH; };
     };
     union {
-        int16 bx;
-        struct { int8 bl; int8 bh; };
+        i16 bx;
+        struct { i8 BL; i8 BH; };
     };
     union {
-        int16 cx;
-        struct { int8 cl; int8 ch; };
+        i16 CX;
+        struct { i8 CL; i8 CH; };
     };
     union {
-        int16 dx;
-        struct { int8 dl; int8 dh; };
+        i16 DX;
+        struct { i8 DL; i8 DH; };
     };
-    int16 sp;
-    int16 bp;
-    int16 si;
-    int16 di;
+    i16 SP;
+    i16 BP;
+    i16 SI;
+    i16 DI;
+    i16 CS;
+    i16 DS;
+    i16 SS;
+    i16 ES;
+    i16 IP;
+    i16 FR;
 } registers;
+
+/*
+ * Mnemonic        Condition tested  Description  
+ * jo              OF = 1            overflow 
+ * jno             OF = 0            not overflow 
+ * jc, jb, jnae    CF = 1            carry / below / not above nor equal
+ * jnc, jae, jnb   CF = 0            not carry / above or equal / not below
+ * je, jz          ZF = 1            equal / zero
+ * jne, jnz        ZF = 0            not equal / not zero
+ * jbe, jna        CF or ZF = 1      below or equal / not above
+ * ja, jnbe        CF or ZF = 0      above / not below or equal
+ * js              SF = 1            sign 
+ * jns             SF = 0            not sign 
+ * jp, jpe         PF = 1            parity / parity even 
+ * jnp, jpo        PF = 0            not parity / parity odd 
+ * jl, jnge        SF xor OF = 1     less / not greater nor equal
+ * jge, jnl        SF xor OF = 0     greater or equal / not less
+ * jle, jng    (SF xor OF) or ZF = 1 less or equal / not greater
+ * jg, jnle    (SF xor OF) or ZF = 0 greater / not less nor equal 
+ *
+ * */
 
 /* NOTE(Abid): Below are all the flags in the register:
     NOTE(Abid): The following flags are set indirectly through arithmatic ops
@@ -67,7 +96,7 @@ typedef enum {
 #undef POS
 } flags_idx;
 
-uint8 GLOBALRegisters[] = {
+u8 GLOBALRegisters[] = {
     0, 0, // ax (al, ah)
     0, 0, // bx (bl, bh)
     0, 0, // cx (cl, ch)
@@ -87,15 +116,15 @@ uint8 GLOBALRegisters[] = {
 #define SIGN_OF_INT(Value, Type) (((Value) >> (sizeof(Type)*8 - 1)) & 0b1)
 
 #define GET_FLAG_VALUE(Enum) \
-    ((*(int16 *)(GLOBALRegisters + 26) & (1 << (Enum))) == (1 << (Enum)))
+    ((*(i16 *)(GLOBALRegisters + 26) & (1 << (Enum))) == (1 << (Enum)))
 
-#define SET_FLAG_VALUE(Enum, Bool)                                                             \
-    do {                                                                                       \
-        if(GET_FLAG_VALUE(Enum)) *(int16 *)(GLOBALRegisters + 26) ^= ((int16)(!Bool) << Enum); \
-        else *(int16 *)(GLOBALRegisters + 26) ^= ((int16)Bool << Enum);                        \
+#define SET_FLAG_VALUE(Enum, Bool)                                                         \
+    do {                                                                                   \
+        if(GET_FLAG_VALUE(Enum)) *(i16 *)(GLOBALRegisters + 26) ^= ((i16)(!Bool) << Enum); \
+        else *(i16 *)(GLOBALRegisters + 26) ^= ((i16)Bool << Enum);                        \
     } while(0)
 
-uint8 RegIdxToRegMem[] = {
+u8 RegIdxToRegMem[] = {
 #define X(Enum) [Enum] =
 #define Y(Idx) Idx,
     X_REGISTERS_MAPPING
@@ -107,13 +136,18 @@ char *OpToStr[] = {
 #define X(Value) #Value,
     X_OPS
 #undef X
-};
-
-char *RETInstToStr[] = {
-    "none",
+    "invalid op, normal to jump cuttoff value printed",
 #define X(Enum) #Enum,
 #define Y(Value)
-    X_RET_INSTRUCTION
+    X_JUMP_INSTRUCTION
+#undef X
+#undef Y
+};
+
+char *JumpInstToStr[] = {
+#define X(Enum) #Enum,
+#define Y(Value)
+    X_JUMP_INSTRUCTION
 #undef X
 #undef Y
 };
@@ -126,7 +160,7 @@ char *RegIdxToRegStr[] = {
 #undef X
 };
 
-// TODO(Abid): Super janky last minute hacks. MUST be removed
+/* TODO(Abid): Super janky last minute hacks. MUST be removed */
 char *GLOBALRegToStr[] = {"ax", "bx", "cx", "dx", "sp", "bp", "si", "di", "cs", "ds", "ss", "es", "ip", "fr"};
 char *EffectiveAddCalc[] = {"bx + si", "bx + di", "bp + si", "bp + di", "si", "di", "bp", "bx"};
 
