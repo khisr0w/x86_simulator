@@ -34,6 +34,8 @@
     X(loopnz) Y(0b11100000) \
     X(jcxz)   Y(0b11100011)
 
+/* WARNING(Abid): Do not change the order of the following macro, neither input an entry
+ *                interspersed in the middle of it. */
 #define X_REGISTERS_MAPPING \
     X(al) Y(0)  \
     X(cl) Y(4)  \
@@ -50,7 +52,11 @@
     X(sp) Y(8)  \
     X(bp) Y(10) \
     X(si) Y(12) \
-    X(di) Y(14) 
+    X(di) Y(14) \
+    X(es) Y(22) \
+    X(cs) Y(16) \
+    X(ss) Y(20) \
+    X(ds) Y(18)
 
 typedef enum {
 #define X(Enum) Enum,
@@ -63,6 +69,10 @@ typedef enum {
 typedef enum {
     /* NOTE(Abid): mov */
     opcode_regmem_reg_mov = 0b100010,
+
+    opcode_regmem_seg_mov = 0b10001110,
+    opcode_seg_regmem_mov = 0b10001100,
+
     opcode_immed_reg_mov = 0b1011,
     opcode_immed_regmem_mov = 0b1100011,
     opcode_mem_accum_mov = 0b1010000,
@@ -116,14 +126,15 @@ typedef enum {
     ft_invalid,     // Invalid
     ft_empty,       // Empty (When not needed)
     ft_reg,         // Register
+    ft_seg_reg,     // Segment Register
     ft_mem,         // Memory
     ft_mem_sized,   // Memory (byte/word)
     ft_effe,        // Effective Address
     ft_effe_sized,  // Effective Address (byte/word)
     ft_imme,        // Immediate
-    ft_imme_sized,  // Immediate (byte/word delianation)
+    ft_imme_sized,  // Immediate (byte/word delineation)
     ft_disp,        // Displacement
-    ft_jump,       // Jumps Index
+    ft_jump,        // Jumps Index
 } field_type;
 
 typedef struct {
@@ -139,6 +150,7 @@ typedef struct {
     op Op;
     mod_flags Mod;
     bool DirectAddress;
+    bool IsOpWide; /* TODO(Abid): Use this instead of operand-specific ones. */
     field Operand1;
     field Operand2;
     field Extended;

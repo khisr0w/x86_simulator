@@ -27,7 +27,7 @@ typedef int16_t i16;
 #define true 1
 #define false 0
 #define ArraySize(Arr) sizeof((Arr)) / sizeof((Arr)[0])
-#define Assert(Expr, ErrorStr) if(!(Expr)) {fprintf(stderr, "ASSERTION ERROR (%s:%d): " ErrorStr "\nExiting...\n", __FILE__, __LINE__); *(i32 *)0 = 0;}
+#define Assert(Expr, ErrorStr) if(!(Expr)) { fprintf(stderr, "ASSERTION ERROR (%s:%d): " ErrorStr "\nExiting...\n", __FILE__, __LINE__); *(i32 *)0 = 0; }
 
 #include "decode8086.c"
 #include "simulate8086.c"
@@ -35,7 +35,7 @@ typedef int16_t i16;
 /* NOTE(Abid): We are assuming 16-bit instructions for now */
 i32 main(i32 argc, char *argv[]) {
     if(argc < 2) {
-        printf("Please provide an asm file.");
+        printf("Please provide an .asm file\n");
         return 0;
     }
 
@@ -49,7 +49,7 @@ i32 main(i32 argc, char *argv[]) {
      *             We then count the number of bytes we have passed and update ip
      *             accordingly. The decoder, therefore, updates the ip as well as
      *             decoding. Then, before simulating the code, we have access to
-     *             our ip and can use the jump instruction.
+     *             our ip and can use the jump instructions.
      */
 
     while(((u16 *)GLOBALRegisters)[IP_REG_16_IDX] < ByteStream.NumBytes) {

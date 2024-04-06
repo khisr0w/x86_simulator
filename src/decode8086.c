@@ -42,7 +42,7 @@ ReadBinaryFileIntoStream(char *FileName) {
 }
 
 internal inline bool
-IsJumpInstruction(u8 Op_Byte, i32 *JumpIdx) {
+IsJumpInstruction(u8 OpByte, i32 *JumpIdx) {
     local_persist u8 JumpInst[] = {
     #define X(Enum)
     #define Y(Value) Value,
@@ -52,7 +52,7 @@ IsJumpInstruction(u8 Op_Byte, i32 *JumpIdx) {
     };
 
     for(i32 Idx = 0; Idx < ArraySize(JumpInst); ++Idx) {
-        if(JumpInst[Idx] == Op_Byte) {
+        if(JumpInst[Idx] == OpByte) {
             *JumpIdx = Idx + _op_normal_to_jump_cutoff + 1;
             return true;
         }
@@ -61,68 +61,82 @@ IsJumpInstruction(u8 Op_Byte, i32 *JumpIdx) {
 }
 
 internal void
-_RegMem_Reg_Output(byte_stream *Stream, u16 *InstPointer, instruction *Inst, u8 FirstByte) {
+RegMemToRegMem(byte_stream *ByteStream, u16 *InstPointer, instruction *Inst, u8 FirstByte,
+               bool IsSegmentReg, bool IsImmediate) {
+    u8 SecondByte = ByteStream->Bytes[(*InstPointer)++];
+
     u8 WFlag = FirstByte & 0b1;
     u8 DFlag = (FirstByte & 0b10) == 0b10;
-
-    u8 SecondByte = Stream->Bytes[(*InstPointer)++];
+    u8 Mod = SecondByte >> 6;
     u8 Reg = ((u8)(SecondByte << 2) >> 5);
     u8 RM = SecondByte & 0b111;
-    u8 Mod = SecondByte >> 6;
-    Inst->Mod = Mod;
 
-    /* NOTE(Abid): Operands[0] : destination
-     *             Operands[1] : source
-     */
-    field *InstOperands[] = {&Inst->Operand1, &Inst->Operand2};
+    u8 RFlag = DFlag ^ 0b1; /* NOTE(Abid): Index of where register resides */
+
+    if(IsSegmentReg) WFlag = 0b1; /* In segment register, we always operate on WORD length. */
+    if(IsImmediate) DFlag = false; /* In immediate, we always make the RM the destination */
+
+    i16 RegisterLocOffset = 8*WFlag;
+
+    Inst->Mod = Mod;
+    Inst->IsOpWide = WFlag;
+
+    field *Operands[] = {&Inst->Operand1, &Inst->Operand2};
+    Operands[RFlag]->Bytes16 = RegisterLocOffset + Reg;
+    Operands[RFlag]->FieldType = ft_reg;
+
     switch(Inst->Mod) {
         case mod_reg: {
-            u8 REGRMIdx[] = {Reg, RM};
-            InstOperands[0]->Bytes16 = 8*WFlag + REGRMIdx[1-DFlag];
-            InstOperands[0]->FieldType = ft_reg;
-
-            InstOperands[1]->Bytes16 = 8*WFlag + REGRMIdx[DFlag];
-            InstOperands[1]->FieldType = ft_reg;
-        } break;
-        case mod_mem_no_dis: {
-            u32 RegAsDest = DFlag ? 0 : 1;
-            InstOperands[RegAsDest]->Bytes16 = 8*WFlag + Reg;
-            InstOperands[RegAsDest]->FieldType = ft_reg;
-
-            Inst->DirectAddress = RM == 0b110;
-            if(Inst->DirectAddress) {
-                InstOperands[1-RegAsDest]->Bytes16 = *(i16 *)(Stream->Bytes + (*InstPointer)++); (*InstPointer)++;
-                InstOperands[1-RegAsDest]->FieldType = ft_mem;
-            } else {
-                InstOperands[1-RegAsDest]->Bytes16 = RM; // Effective address calculation
-                InstOperands[1-RegAsDest]->FieldType = ft_effe;
-            }
+            /* NOTE(Abid): In case of immediate to memory, this case wouldn't hit. */
+            Operands[1-RFlag]->Bytes8[0] = RegisterLocOffset + RM;
+            Operands[1-RFlag]->FieldType = ft_reg;
         } break;
         case mod_mem_8_dis: {
-            // TODO(Abid): Check the low and high bits see if they conform for the endian stuff.
-            u32 RegAsDest = DFlag ? 0 : 1;
-            InstOperands[RegAsDest]->Bytes16 = 8*WFlag + Reg;
-            InstOperands[RegAsDest]->FieldType = ft_reg;
-            InstOperands[1-RegAsDest]->Bytes16 = RM;
-            InstOperands[1-RegAsDest]->FieldType = ft_effe;
-
-            Inst->Extended.Bytes8[0] = *(i8 *)(Stream->Bytes + (*InstPointer)++);
+            i8 Disp = *(i8 *)(ByteStream->Bytes + (*InstPointer)++);
+            Inst->Extended.Bytes8[0] = Disp;
             Inst->Extended.IsBYTE = true;
             Inst->Extended.FieldType = ft_disp;
         } break;
-        case mod_mem_16_dis: {
-            u32 RegAsDest = DFlag ? 0 : 1;
-            InstOperands[RegAsDest]->Bytes16 = 8*WFlag + Reg;
-            InstOperands[RegAsDest]->FieldType = ft_reg;
-            InstOperands[1-RegAsDest]->Bytes16 = RM;
-            InstOperands[1-RegAsDest]->FieldType = ft_effe;
+        case mod_mem_no_dis: {
+            Operands[1-RFlag]->Bytes8[0] = RM;
+            Operands[1-RFlag]->Bytes8[1] = Mod;
+            Operands[1-RFlag]->Bytes16 = ft_effe_sized;
 
-            u8 LowByte = *(i8 *)(Stream->Bytes + (*InstPointer)++);
-            u16 HighByte = *(i8 *)(Stream->Bytes + (*InstPointer)++);
-            Inst->Extended.Bytes16 = (HighByte << 8) | LowByte;
+            if(RM & 0b110) { /* Direct address */
+                u8 LowByte = *(i8 *)(ByteStream->Bytes + (*InstPointer)++);
+                u16 HighByte = *(i8 *)(ByteStream->Bytes + (*InstPointer)++);
+                i16 Disp = (HighByte << 8) | LowByte;
+                Inst->Extended.Bytes16 = Disp;
+                Inst->Extended.FieldType = ft_disp;
+                Inst->Extended.IsBYTE = false;
+            }
+        } break;
+        case mod_mem_16_dis: {
+            Operands[1-RFlag]->Bytes8[0] = RM;
+            Operands[1-RFlag]->Bytes8[1] = Mod;
+            Operands[1-RFlag]->Bytes8[8] = ft_effe_sized;
+
+            u8 LowByte = *(i8 *)(ByteStream->Bytes + (*InstPointer)++);
+            u16 HighByte = *(i8 *)(ByteStream->Bytes + (*InstPointer)++);
+            i16 Disp = (HighByte << 8) | LowByte;
+            Inst->Extended.Bytes16 = Disp;
             Inst->Extended.FieldType = ft_disp;
+            Inst->Extended.IsBYTE = false;
         } break;
         default: Assert(0, "invalid code path");
+    }
+
+    if(IsImmediate) {
+        if(WFlag) {
+            u8 LowByte = *(i8 *)(ByteStream->Bytes + (*InstPointer)++);
+            u16 HighByte = *(i8 *)(ByteStream->Bytes + (*InstPointer)++);
+            Operands[1]->Bytes16 = (HighByte << 8) | LowByte;
+            Operands[1]->IsBYTE = false;
+        } else {
+            Operands[1]->Bytes8[0] = *(i8 *)(ByteStream->Bytes + (*InstPointer)++);
+            Operands[1]->IsBYTE = true;
+        }
+        Operands[1]->FieldType = ft_imme;
     }
 }
 
@@ -135,15 +149,30 @@ _RegMem_Reg_Output(byte_stream *Stream, u16 *InstPointer, instruction *Inst, u8 
  *             decoding.
  *             Initially, we decode one instruction and simulate it immediately.
  */
-/* TODO(Abid): Implement the segment registers as well */
+
 internal instruction 
 DecodeNext(byte_stream *ByteStream, u16 *InstPointer) {
     u8 FirstByte = ByteStream->Bytes[(*InstPointer)++];
     instruction Instruction = {0};
 
-    if((FirstByte >> 2) == opcode_regmem_reg_mov) { // Register/Memory or Register move
+    if((FirstByte >> 2) == opcode_regmem_reg_mov) { // Register/Memory to/from Register move
         Instruction.Op = op_mov;
-        _RegMem_Reg_Output(ByteStream, InstPointer, &Instruction, FirstByte);
+        RegMemToRegMem(ByteStream, InstPointer, &Instruction, FirstByte, false, false);
+
+    } else if(FirstByte == opcode_regmem_seg_mov) { // Register/Memory to Segment Register move
+        Instruction.Op = op_mov;
+        RegMemToRegMem(ByteStream, InstPointer, &Instruction, FirstByte, true, false);
+
+        /* TODO(Abid): This is really ugly and should be done inside the function itself. */
+        Instruction.Operand1.FieldType = ft_seg_reg;
+        Instruction.Operand1.Bytes16 += 8; /* 8 + 8 = 16 (First 8 from the function) */
+    } else if(FirstByte == opcode_seg_regmem_mov) { // Segment to Register/Memory move
+        Instruction.Op = op_mov;
+        RegMemToRegMem(ByteStream, InstPointer, &Instruction, FirstByte, true, false);
+
+        /* TODO(Abid): This is really ugly and should be done inside the function itself. */
+        Instruction.Operand2.FieldType = ft_seg_reg;
+        Instruction.Operand2.Bytes16 += 8;
     } else if((FirstByte >> 4) == opcode_immed_reg_mov) { // Immediate to register move
         Instruction.Op = op_mov;
 
@@ -158,45 +187,9 @@ DecodeNext(byte_stream *ByteStream, u16 *InstPointer) {
             Instruction.Operand2.IsBYTE = true;
         }
         Instruction.Operand2.FieldType = ft_imme;
-    } else if((FirstByte >> 1) == opcode_immed_regmem_mov) { // Immediate to register/memory move
+    } else if((FirstByte >> 1) == opcode_immed_regmem_mov) { // Immediate to **memory**/register move
         Instruction.Op = op_mov;
-        u8 SecondByte = ByteStream->Bytes[(*InstPointer)++];
-        u8 Mod = SecondByte >> 6;
-        u8 WFlag = FirstByte & 0b1;
-        u8 RM = SecondByte & 0b111;
-
-        Instruction.Operand1.Bytes16 = RM; // Effective address calculation
-        Instruction.Operand1.FieldType = ft_effe;
-        switch(Mod) {
-            /* NOTE(Abid): The reg mod should've been done above in immediate to register mode */
-            case mod_reg: { Assert(0, "Cannot have this mod here"); } break;
-            case mod_mem_8_dis: {
-                Instruction.Mod = mod_mem_8_dis;
-                i8 Disp = *(i8 *)(ByteStream->Bytes + (*InstPointer)++); (*InstPointer)++;
-                Instruction.Extended.Bytes8[0] = Disp;
-                Instruction.Extended.IsBYTE = true;
-                Instruction.Extended.FieldType = ft_disp;
-            } break;
-            case mod_mem_16_dis: {
-                Instruction.Mod = mod_mem_16_dis;
-                u8 LowByte = *(i8 *)(ByteStream->Bytes + (*InstPointer)++);
-                u16 HighByte = *(i8 *)(ByteStream->Bytes + (*InstPointer)++);
-                i16 Disp = (HighByte << 8) | LowByte;
-                Instruction.Extended.Bytes16 = Disp;
-                Instruction.Extended.FieldType = ft_disp;
-            } break;
-            case mod_mem_no_dis: { Instruction.Mod = mod_mem_no_dis; }break;
-        }
-
-        if(WFlag) {
-            u8 LowByte = *(i8 *)(ByteStream->Bytes + (*InstPointer)++);
-            u16 HighByte = *(i8 *)(ByteStream->Bytes + (*InstPointer)++);
-            Instruction.Operand2.Bytes16 = (HighByte << 8) | LowByte;
-        } else {
-            Instruction.Operand2.Bytes8[0] = *(i8 *)(ByteStream->Bytes + (*InstPointer)++);
-            Instruction.Operand2.IsBYTE = true;
-        }
-        Instruction.Operand2.FieldType = ft_imme_sized;
+        RegMemToRegMem(ByteStream, InstPointer, &Instruction, FirstByte, false, true);
     } else if((FirstByte >> 1) == opcode_mem_accum_mov) { // Memory to accumulator move
         Instruction.Op = op_mov;
         u8 WFlag = FirstByte & 0b1;
@@ -345,7 +338,7 @@ DecodeNext(byte_stream *ByteStream, u16 *InstPointer) {
             case opcode_cmp: Instruction.Op = op_cmp; break;
             default: Assert(0, "invalid path");
         }
-        _RegMem_Reg_Output(ByteStream, InstPointer, &Instruction, FirstByte);
+        RegMemToRegMem(ByteStream, InstPointer, &Instruction, FirstByte, false, false);
     } else {
         i32 JumpOpIdx = 0;
         if(IsJumpInstruction(FirstByte, &JumpOpIdx)) {

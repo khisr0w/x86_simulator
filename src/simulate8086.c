@@ -8,6 +8,35 @@
 
 #include "simulate8086.h"
 
+internal u16
+CalculateEffectiveAddress(field Operand, field Dist) {
+    u16 Result = 0;
+
+    u8 RM = Operand.Bytes8[0];
+    u8 Mod = Operand.Bytes8[1];
+    Assert((Mod & 0b11) != 0b11, "mod cannot be 0b11 when effective address calc.");
+
+    registers *Register = (registers *)GLOBALRegisters;
+    switch(RM) {
+        case 0b000: Result = Register->BX + Register->SI; break;
+        case 0b001: Result = Register->BX + Register->DI; break;
+        case 0b010: Result = Register->BP + Register->SI; break;
+        case 0b011: Result = Register->BP + Register->DI; break;
+        case 0b100: Result = Register->SI; break;
+        case 0b101: Result = Register->DI; break;
+        case 0b110: break; /* Direct address */
+        case 0b111: Result = Register->BX; break;
+    }
+
+    if(Dist.FieldType != ft_invalid) {
+        Assert(Dist.FieldType == ft_disp, "incorrect field type. Expected displacement");
+        if(Dist.IsBYTE) Result += Dist.Bytes8[0];
+        else Result += Dist.Bytes16;
+    }
+
+    return Result;
+}
+
 /* TODO(Abid): Refactor the JUMP instructions to remove the dumb control flow change below */
 internal void
 PrintNext(instruction *Inst) {
@@ -21,15 +50,22 @@ PrintNext(instruction *Inst) {
 
         switch(Operand.FieldType) {
             case ft_reg: {
-                printf("%s", RegIdxToRegStr[Operand.Bytes16]);
+                printf("%s", RegIdxToRegStr[Operand.Bytes8[0]]);
             } break;
-            case ft_mem: {
-                i16 Addr = Operand.IsBYTE ? Operand.Bytes8[0] : Operand.Bytes16;
-                printf("[%d]", Addr);
+            case ft_seg_reg: {
+                printf("%s", RegIdxToRegStr[Operand.Bytes8[0]]); 
             } break;
+            case ft_mem:
             case ft_mem_sized: {
-                Operand.IsBYTE ? printf("byte [%d]", Operand.Bytes16)
-                               : printf("word [%d]", Operand.Bytes16);
+                i16 Addr = 0;
+                // Operand.IsBYTE ? Operand.Bytes8[0] : Operand.Bytes16;
+                if(Inst->DirectAddress) { /* Direct address */
+                    Addr = Operand.Bytes16;
+                    Operand.IsBYTE ? printf("byte [%d]", Addr)
+                                   : printf("word [%d]", Addr);
+                } else Assert(0, "Not Implemented");
+                
+
             } break;
             case ft_effe: { 
                 printf("[%s", EffectiveAddCalc[Operand.Bytes16]);
@@ -41,13 +77,13 @@ PrintNext(instruction *Inst) {
                 printf("]");
             } break;
             case ft_effe_sized: { 
-                Operand.IsBYTE ? printf("byte [%s", EffectiveAddCalc[Operand.Bytes16])
-                               : printf("word [%s", EffectiveAddCalc[Operand.Bytes16]);
-                if(Extended.FieldType == ft_disp) { // if we have memory displacement field!
-                    i32 Disp = Extended.IsBYTE ? Extended.Bytes8[0] : Extended.Bytes16;
-                    Disp < 0 ? printf(" - %i", Disp*-1) :  printf(" + %i", Disp);
-                }
-                printf("]");
+                // Operand.IsBYTE ? printf("byte [%s", EffectiveAddCalc[Operand.Bytes16])
+                //                : printf("word [%s", EffectiveAddCalc[Operand.Bytes16]);
+                // if(Extended.FieldType == ft_disp) { // if we have memory displacement field!
+                //     i32 Disp = Extended.IsBYTE ? Extended.Bytes8[0] : Extended.Bytes16;
+                //     Disp < 0 ? printf(" - %i", Disp*-1) :  printf(" + %i", Disp);
+                // }
+                // printf("]");
             } break;
             case ft_imme: {
                 i32 Immediate = Operand.IsBYTE ? Operand.Bytes8[0] : Operand.Bytes16;
@@ -109,8 +145,12 @@ PrintFlags() {
     }
 }
 
+#define GET_REGISTER(Name) ((registers *)GLOBALRegisters)->Name
+#define SET_REGISTER(Name, Value) ((registers *)GLOBALRegisters)->Name = Value
 /* NOTE(Abid): The portion related to resolving the source and destination is the same,
  *             therefore, it is separated out from the rest of the switch statement. */
+/* TODO(Abid): Operations are either wide (16-bit) or not (8-bit), there is no need to keep operand-specific data
+ *             regrading the size of the op */
 internal void
 SimulateNext(instruction *Inst) {
     PrintNext(Inst); printf(" ; ");
@@ -118,13 +158,19 @@ SimulateNext(instruction *Inst) {
     /* NOTE(Abid): Source resolution */
     i32 Source = 0;
     bool IsSrcByte = Inst->Operand2.IsBYTE;
-    bool IsSrcReg = false;
     switch(Inst->Operand2.FieldType) {
+        case ft_seg_reg:
         case ft_reg: {
-            IsSrcReg = true;
-            i16 Idx = Inst->Operand2.Bytes16;
+            i16 Idx = Inst->Operand2.Bytes8[0];
             Idx = RegIdxToRegMem[Idx];
             Source = IsSrcByte ? *(i8 *)(GLOBALRegisters + Idx) : *(i16 *)(GLOBALRegisters + Idx);
+        } break;
+        case ft_effe:
+        case ft_effe_sized: {
+            u16 Address = CalculateEffectiveAddress(Inst->Operand2, Inst->Extended);
+            Source = IsSrcByte ? *(i8 *)(GLOBALMemory + Address)
+                               : *(i16 *)(GLOBALMemory + Address);
+
         } break;
         case ft_imme_sized:
         case ft_imme: {
@@ -143,9 +189,10 @@ SimulateNext(instruction *Inst) {
     bool IsDestByte = false;
     i16 Idx = -1; 
     switch(Inst->Operand1.FieldType) {
+        case ft_seg_reg:
         case ft_reg: {
             IsDestReg = true;
-            Idx = Inst->Operand1.Bytes16;
+            Idx = Inst->Operand1.Bytes8[0];
             IsDestByte = Idx < WIDE_REGISTER_START_IDX; 
 
             Idx = RegIdxToRegMem[Idx];
@@ -153,6 +200,12 @@ SimulateNext(instruction *Inst) {
 
             printf("%s:", GLOBALRegToStr[(Idx - Idx % 2)/2]);
             printf("->"); PrintRegister(Idx - Idx % 2, true);
+        } break;
+        case ft_mem_sized:
+        case ft_effe:
+        case ft_effe_sized: {
+            u16 Address = CalculateEffectiveAddress(Inst->Operand1, Inst->Extended);
+            Dest = GLOBALMemory + Address;
         } break;
         case ft_imme_sized:
         case ft_imme: Assert(0, "cannot have immediate value as destination"); break;
@@ -163,7 +216,6 @@ SimulateNext(instruction *Inst) {
     }
 
     /* NOTE(Abid): Op simulation */
-
     i32 InitDestValue = 0;
     i32 PostDestValue = 0;
     bool IsImplicitFlagOp = false;
@@ -283,13 +335,13 @@ SimulateNext(instruction *Inst) {
         bool IsOverFlow = false;
         if(IsDestByte) {
             i32 SourceSign = Inst->Op == op_add ? SIGN_OF_INT((i8)(Source), i8) :
-                                                  !(SIGN_OF_INT((i8)(Source), i8));
+                                                !(SIGN_OF_INT((i8)(Source), i8));
             bool IsOperandSignSame = SourceSign == SIGN_OF_INT((i8)(InitDestValue), i8);
             IsOverFlow = (IsOperandSignSame) && (SourceSign != SIGN_OF_INT(*(i8 *)(Dest), i8));
         }
         else {
             i32 SourceSign = Inst->Op == op_add ? SIGN_OF_INT((i16)(Source & 0xffff), i16) :
-                                                  !(SIGN_OF_INT((i16)(Source & 0xffff), i16));
+                                                !(SIGN_OF_INT((i16)(Source & 0xffff), i16));
             bool IsOperandSignSame = SourceSign == SIGN_OF_INT((i16)(InitDestValue & 0xffff), i16);
             IsOverFlow = (IsOperandSignSame) && (SourceSign != SIGN_OF_INT(*(i16 *)(Dest), i16));
         }
@@ -309,7 +361,7 @@ SimulateNext(instruction *Inst) {
     // NOTE(Abid): Post-modified print here
     if(Dest) {
         if(IsDestReg) { printf("->"); PrintRegister(Idx - Idx % 2, true); }
-        else Assert(0, "not implemented");
+        // else Assert(0, "not implemented");
         printf(" ; "); 
     }
 

@@ -5,6 +5,7 @@
     |    Last Modified:                                                                |
     |                                                                                  |
     +=====================| Sayed Abid Hashimi, Copyright © All rights reserved |======+  */
+
 #define IP_REG_16_IDX 12
 #define IP_REG_8_IDX 24
 
@@ -19,7 +20,7 @@ typedef struct {
         struct { i8 AL; i8 AH; };
     };
     union {
-        i16 bx;
+        i16 BX;
         struct { i8 BL; i8 BH; };
     };
     union {
@@ -101,10 +102,10 @@ u8 GLOBALRegisters[] = {
     0, 0, // bx (bl, bh)
     0, 0, // cx (cl, ch)
     0, 0, // dx (dl, dh)
-    0, 0, // sp
-    0, 0, // bp
-    0, 0, // si
-    0, 0, // di
+    0, 0, // sp (stack pointer)
+    0, 0, // bp (base pointer)
+    0, 0, // si (source index)
+    0, 0, // di (destination index)
     0, 0, // cs (code segment)
     0, 0, // ds (data segment)
     0, 0, // ss (stack segment)
@@ -112,6 +113,8 @@ u8 GLOBALRegisters[] = {
     0, 0, // ip (instruction pointer)
     0, 0, // fr (flags register)
 };
+
+u8 GLOBALMemory[1024*1024]; /* 1 MB */
 
 #define SIGN_OF_INT(Value, Type) (((Value) >> (sizeof(Type)*8 - 1)) & 0b1)
 
@@ -162,6 +165,7 @@ char *RegIdxToRegStr[] = {
 
 /* TODO(Abid): Super janky last minute hacks. MUST be removed */
 char *GLOBALRegToStr[] = {"ax", "bx", "cx", "dx", "sp", "bp", "si", "di", "cs", "ds", "ss", "es", "ip", "fr"};
+
 char *EffectiveAddCalc[] = {"bx + si", "bx + di", "bp + si", "bp + di", "si", "di", "bp", "bx"};
 
 #define SIMULATE8086_H
