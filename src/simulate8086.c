@@ -24,7 +24,7 @@ CalculateEffectiveAddress(field Operand, field Dist) {
         case 0b011: Result = Register->BP + Register->DI; break;
         case 0b100: Result = Register->SI; break;
         case 0b101: Result = Register->DI; break;
-        case 0b110: break; /* Direct address */
+        case 0b110: { if(Mod != 0b00) Result = Register->BP; } break;
         case 0b111: Result = Register->BX; break;
     }
 
@@ -77,11 +77,13 @@ PrintNext(instruction *Inst) {
                 printf("]");
             } break;
             case ft_effe_sized: { 
+                /* TODO(Abid): Fix this print routine to reflect the changes made. */
                 // Operand.IsBYTE ? printf("byte [%s", EffectiveAddCalc[Operand.Bytes16])
                 //                : printf("word [%s", EffectiveAddCalc[Operand.Bytes16]);
                 // if(Extended.FieldType == ft_disp) { // if we have memory displacement field!
-                //     i32 Disp = Extended.IsBYTE ? Extended.Bytes8[0] : Extended.Bytes16;
-                //     Disp < 0 ? printf(" - %i", Disp*-1) :  printf(" + %i", Disp);
+                //     i16 Address = (i16)CalculateEffectiveAddress(Operand, Inst->Extended);
+                //     // printf("%i", Disp*-1) :  printf(" + %i", Disp);
+                //     Address < 0 ? printf(" - %i", Address*-1) :  printf(" + %i", Address);
                 // }
                 // printf("]");
             } break;

@@ -32,6 +32,42 @@ typedef int16_t i16;
 #include "decode8086.c"
 #include "simulate8086.c"
 
+internal inline byte_stream
+ReadBinaryFileIntoStream(char *FileName) {
+    byte_stream Stream = {0};
+
+    FILE* File;
+    if(fopen_s(&File, FileName, "rb") != 0) return Stream;
+
+    /* NOTE(Abid): Get the size of the File */
+    fseek(File, 0, SEEK_END);
+    size_t FileSize = ftell(File);
+    rewind(File);
+
+    // u8* Content = (u8 *)malloc(FileSize);
+
+    /* NOTE(Abid): Read into the start of the main memory */
+    u8* Content = GLOBALMemory;
+    if (Content == NULL) {
+        fclose(File);
+        return Stream;
+    }
+
+    size_t BytesRead = fread(Content, 1, FileSize, File);
+    if (BytesRead != FileSize) {
+        fclose(File);
+        free(Content);
+        return Stream;
+    }
+    fclose(File);
+
+    Stream.Bytes = Content;
+    Stream.NumBytes = BytesRead;
+    Stream.Loaded = true;
+
+    return Stream;
+}
+
 /* NOTE(Abid): We are assuming 16-bit instructions for now */
 i32 main(i32 argc, char *argv[]) {
     if(argc < 2) {
@@ -64,6 +100,11 @@ i32 main(i32 argc, char *argv[]) {
         /* NOTE(Abid): Print the whole register only */
         PrintRegister(2*Idx, true); printf(" ("); PrintRegister(2*Idx, false); printf(")\n");
     }
+
+    /* NOTE(Abid): Dump the memory to .data file */
+    FILE* MemoryData;
+    fopen_s(&MemoryData, "memory.data", "wb");
+    fwrite(GLOBALMemory, ArraySize(GLOBALMemory), 1, MemoryData);
 
     return 0;
 }
