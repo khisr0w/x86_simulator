@@ -167,6 +167,7 @@ char *RegIdxToRegStr[] = {
 char *GLOBALRegToStr[] = {"ax", "bx", "cx", "dx", "sp", "bp", "si", "di", "cs", "ds", "ss", "es", "ip", "fr"};
 
 char *EffectiveAddCalc[] = {"bx + si", "bx + di", "bp + si", "bp + di", "si", "di", "bp", "bx"};
+usize GLOBALClockCount = 0;
 
 #define SIMULATE8086_H
 #endif

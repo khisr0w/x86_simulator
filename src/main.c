@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+typedef size_t usize;
 typedef uint32_t u32;
 typedef int32_t i32;
 typedef int64_t i64;

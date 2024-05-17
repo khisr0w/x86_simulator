@@ -8,6 +8,162 @@
 
 #include "simulate8086.h"
 
+typedef struct {
+    i32 BaseClock;
+    i32 EA;
+    bool Initialized;
+} clock;
+
+/* TODO(Abid): Refactor this, collapse all switch conditions into one by just indexing to an array */
+internal clock
+CountClocks(instruction *Inst) {
+    clock Clock = {0};
+    u8 RM = 0;
+    u8 Mod = 0;
+    bool IsEA = false;
+
+    switch(Inst->Op) {
+        case op_mov: {
+            Clock.Initialized = true;
+            if((Inst->Operand1.FieldType == ft_mem_sized) ||
+               (Inst->Operand1.FieldType == ft_mem) ||
+               (Inst->Operand1.FieldType == ft_effe) ||
+               (Inst->Operand1.FieldType == ft_effe_sized)) {
+                /* NOTE(Abid): Dest: Memory */
+                RM = Inst->Operand1.Bytes8[0];
+                Mod = Inst->Operand1.Bytes8[1];
+                IsEA = true;
+                if(Inst->Operand2.FieldType == ft_reg) { /* Source: Register, Acccumulator */
+                    if((Inst->Operand2.Bytes16 == ax) || (Inst->Operand2.Bytes16 == al)) {
+                        /* NOTE(Abid): Source: Acccumulator */ 
+                        Clock.BaseClock = 10;
+                    } else {
+                        /* NOTE(Abid): Source: Register */ 
+                        Clock.BaseClock = 9;
+                    }
+                } else if((Inst->Operand2.FieldType == ft_imme_sized) ||
+                          (Inst->Operand2.FieldType == ft_imme)) { 
+                    /* NOTE(Abid): Source: Immediate */
+                    Clock.BaseClock = 10;
+                }
+            } else if(Inst->Operand1.FieldType == ft_reg) {
+                /* NOTE(Abid): Dest: Register */
+                if((Inst->Operand2.FieldType == ft_mem_sized) ||
+                   (Inst->Operand2.FieldType == ft_mem) ||
+                   (Inst->Operand2.FieldType == ft_effe) ||
+                   (Inst->Operand2.FieldType == ft_effe_sized)) {
+                    /* NOTE(Abid): Source: Memory */
+                    RM = Inst->Operand2.Bytes8[0];
+                    Mod = Inst->Operand2.Bytes8[1];
+                    IsEA = true;
+                    if((Inst->Operand1.Bytes16 == ax) || (Inst->Operand1.Bytes16 == al)) {
+                        /* NOTE(Abid): Dest: Acccumulator */ 
+                        Clock.BaseClock = 10;
+                    } else Clock.BaseClock = 8;
+                } else if((Inst->Operand2.FieldType == ft_imme_sized) ||
+                          (Inst->Operand2.FieldType == ft_imme)) {
+                    /* NOTE(Abid): Source: Immediate */
+                    Clock.BaseClock = 4;
+                } else if(Inst->Operand2.FieldType == ft_reg) {
+                    /* NOTE(Abid): Source: Register */
+                    Clock.BaseClock = 2;
+                }
+            }
+        } break;
+        case op_add: {
+            Clock.Initialized = true;
+            if((Inst->Operand1.FieldType == ft_mem_sized) ||
+               (Inst->Operand1.FieldType == ft_mem) ||
+               (Inst->Operand1.FieldType == ft_effe) ||
+               (Inst->Operand1.FieldType == ft_effe_sized)) {
+                RM = Inst->Operand1.Bytes8[0];
+                Mod = Inst->Operand1.Bytes8[1];
+                IsEA = true;
+                if((Inst->Operand2.FieldType == ft_imme_sized) ||
+                   (Inst->Operand2.FieldType == ft_imme)) {
+                    Clock.BaseClock = 17;
+                } else if(Inst->Operand2.FieldType == ft_reg) {
+                    Clock.BaseClock = 16;
+                }
+            } else if(Inst->Operand1.FieldType == ft_reg) {
+                if((Inst->Operand2.FieldType == ft_mem_sized) ||
+                   (Inst->Operand2.FieldType == ft_mem) ||
+                   (Inst->Operand2.FieldType == ft_effe) ||
+                   (Inst->Operand2.FieldType == ft_effe_sized)) {
+                    RM = Inst->Operand2.Bytes8[0];
+                    Mod = Inst->Operand2.Bytes8[1];
+                    IsEA = true;
+                    Clock.BaseClock = 9;
+                } else if(Inst->Operand2.FieldType == ft_reg) {
+                    Clock.BaseClock = 3;
+                } else if((Inst->Operand2.FieldType == ft_imme) ||
+                          (Inst->Operand2.FieldType == ft_imme_sized)) {
+                    Clock.BaseClock = 4;
+                }
+            }
+        } break;
+    }
+
+    if(IsEA) {
+        bool IsDirectAddress = (RM == 0b110) && (Mod == 0b00);
+        bool IsDisplacement = (Mod == 0b01) || (Mod == 0b10);
+
+        if(IsDirectAddress) { /* Direct Address */
+            Clock.EA = 6;
+        } else {
+            switch(RM) {
+                case 0b011:   /* bp + di */
+                case 0b000: { /* bx + si */
+                    if(IsDisplacement) Clock.EA = 11;
+                    else Clock.EA = 7;
+                } break;
+
+                case 0b010:   /* bp + si */
+                case 0b001: { /* bx + di */
+                    if(IsDisplacement) Clock.EA = 12;
+                    else Clock.EA = 8;
+                } break;
+
+                case 0b100:   /* si */
+                case 0b101:   /* di */
+                case 0b111:   /* bx */
+                case 0b110: { /* bp */
+                    if(IsDisplacement) Clock.EA = 9;
+                    else Clock.EA = 5;
+                } break;
+            }
+        }
+    }
+
+    return Clock;
+}
+
+internal void
+PrintEffectiveAddress(field Operand, field Dist) {
+    Operand.IsBYTE ? printf("byte [") : printf("word [");
+    u8 RM = Operand.Bytes8[0];
+    u8 Mod = Operand.Bytes8[1];
+    Assert((Mod & 0b11) != 0b11, "mod cannot be 0b11 when effective address calc.");
+
+    switch(RM) {
+        case 0b000: printf("bx + si"); break;
+        case 0b001: printf("bx + di"); break;
+        case 0b010: printf("bp + si"); break;
+        case 0b011: printf("bp + di"); break;
+        case 0b100: printf("si"); break;
+        case 0b101: printf("di"); break;
+        case 0b110: { if(Mod != 0b00) printf("bp"); } break;
+        case 0b111: printf("bx"); break;
+    }
+
+    if(Dist.FieldType != ft_invalid) {
+        Assert(Dist.FieldType == ft_disp, "incorrect field type. Expected displacement");
+        i32 Disp = Dist.IsBYTE ? Dist.Bytes8[0] : Dist.Bytes16;
+        Disp < 0 ? printf(" - %i", Disp*-1) :  printf(" + %i", Disp);
+    }
+    printf("]");
+}
+
 internal u16
 CalculateEffectiveAddress(field Operand, field Dist) {
     u16 Result = 0;
@@ -67,25 +223,9 @@ PrintNext(instruction *Inst) {
                 
 
             } break;
-            case ft_effe: { 
-                printf("[%s", EffectiveAddCalc[Operand.Bytes16]);
-                if(Extended.FieldType == ft_disp) {
-                    // NOTE(Abid): We have displacement!
-                    i32 Disp = Extended.IsBYTE ? Extended.Bytes8[0] : Extended.Bytes16;
-                    Disp < 0 ? printf(" - %i", Disp*-1) :  printf("+ %i", Disp);
-                }
-                printf("]");
-            } break;
+            case ft_effe: 
             case ft_effe_sized: { 
-                /* TODO(Abid): Fix this print routine to reflect the changes made. */
-                // Operand.IsBYTE ? printf("byte [%s", EffectiveAddCalc[Operand.Bytes16])
-                //                : printf("word [%s", EffectiveAddCalc[Operand.Bytes16]);
-                // if(Extended.FieldType == ft_disp) { // if we have memory displacement field!
-                //     i16 Address = (i16)CalculateEffectiveAddress(Operand, Inst->Extended);
-                //     // printf("%i", Disp*-1) :  printf(" + %i", Disp);
-                //     Address < 0 ? printf(" - %i", Address*-1) :  printf(" + %i", Address);
-                // }
-                // printf("]");
+                PrintEffectiveAddress(Operand, Extended);
             } break;
             case ft_imme: {
                 i32 Immediate = Operand.IsBYTE ? Operand.Bytes8[0] : Operand.Bytes16;
@@ -114,6 +254,12 @@ PrintNext(instruction *Inst) {
             default : Assert(0, "invalid path.")
         }
         if(IsPrintComma) printf(", ");
+    }
+    clock Clocks = CountClocks(Inst);
+    if(Clocks.Initialized) {
+        GLOBALClockCount += (Clocks.BaseClock + Clocks.EA);
+        printf("; Clocks: +%d = %zd", Clocks.BaseClock + Clocks.EA, GLOBALClockCount);
+        if(Clocks.EA != 0) printf(" (%d + %dea)", Clocks.BaseClock, Clocks.EA);
     }
 }
 

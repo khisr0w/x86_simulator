@@ -57,11 +57,13 @@ ImmedRegMemToRegMem(byte_stream *ByteStream, u16 *InstPointer, instruction *Inst
             /* NOTE(Abid): In case of immediate to memory, this case wouldn't hit. */
             Operands[1-RFlag]->Bytes8[0] = (i8)(RegisterLocOffset + RM);
             Operands[1-RFlag]->FieldType = ft_reg;
+            Operands[1-RFlag]->IsBYTE = !WFlag;
         } break;
         case mod_mem_8_dis: {
             Operands[1-RFlag]->Bytes8[0] = RM;
             Operands[1-RFlag]->Bytes8[1] = Mod;
             Operands[1-RFlag]->FieldType = ft_effe_sized;
+            Operands[1-RFlag]->IsBYTE = !WFlag;
 
             i8 Disp = *(i8 *)(ByteStream->Bytes + (*InstPointer)++);
             Inst->Extended.Bytes8[0] = Disp;
@@ -72,6 +74,7 @@ ImmedRegMemToRegMem(byte_stream *ByteStream, u16 *InstPointer, instruction *Inst
             Operands[1-RFlag]->Bytes8[0] = RM;
             Operands[1-RFlag]->Bytes8[1] = Mod;
             Operands[1-RFlag]->FieldType = ft_effe_sized;
+            Operands[1-RFlag]->IsBYTE = !WFlag;
 
             if((RM == 0b110) && (Mod != 0b11)) { /* Direct address */
                 u8 LowByte = *(i8 *)(ByteStream->Bytes + (*InstPointer)++);
@@ -86,6 +89,7 @@ ImmedRegMemToRegMem(byte_stream *ByteStream, u16 *InstPointer, instruction *Inst
             Operands[1-RFlag]->Bytes8[0] = RM;
             Operands[1-RFlag]->Bytes8[1] = Mod;
             Operands[1-RFlag]->FieldType = ft_effe_sized;
+            Operands[1-RFlag]->IsBYTE = !WFlag;
 
             u8 LowByte = *(i8 *)(ByteStream->Bytes + (*InstPointer)++);
             u16 HighByte = *(i8 *)(ByteStream->Bytes + (*InstPointer)++);
