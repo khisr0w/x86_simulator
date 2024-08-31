@@ -1,2 +1,2 @@
-# x86 Optimization
-Learning CPU optimization and simulating x86 architecture in the process.
+# 8086 CPU Simulator
+Simulating the general subset of 8086 architecture (with some portions of 8088 as well)
